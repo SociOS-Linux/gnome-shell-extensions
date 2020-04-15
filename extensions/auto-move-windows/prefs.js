@@ -29,9 +29,9 @@ class AutoMoveSettingsWidget extends Gtk.ScrolledWindow {
             margin_start: 36,
             margin_end: 36,
         });
-        this.add(box);
+        this.set_child(box);
 
-        box.add(new Gtk.Label({
+        box.append(new Gtk.Label({
             label: '<b>%s</b>'.format(_('Workspace Rules')),
             use_markup: true,
             halign: Gtk.Align.START,
@@ -40,9 +40,9 @@ class AutoMoveSettingsWidget extends Gtk.ScrolledWindow {
         this._list = new Gtk.ListBox({
             selection_mode: Gtk.SelectionMode.NONE,
             valign: Gtk.Align.START,
+            show_separators: true,
         });
-        this._list.set_header_func(this._updateHeader.bind(this));
-        box.add(this._list);
+        box.append(this._list);
 
         const context = this._list.get_style_context();
         const cssProvider = new Gtk.CssProvider();
@@ -53,7 +53,7 @@ class AutoMoveSettingsWidget extends Gtk.ScrolledWindow {
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
         context.add_class('frame');
 
-        this._list.add(new NewRuleRow());
+        this._list.insert(new NewRuleRow(), -1);
 
         this._actionGroup = new Gio.SimpleActionGroup();
         this._list.insert_action_group('rules', this._actionGroup);
@@ -84,12 +84,10 @@ class AutoMoveSettingsWidget extends Gtk.ScrolledWindow {
         this._sync();
 
         this.connect('destroy', () => this._settings.run_dispose());
-
-        this.show_all();
     }
 
     _onAddActivated() {
-        const dialog = new NewRuleDialog(this.get_toplevel());
+        const dialog = new NewRuleDialog(this.get_root());
         dialog.connect('response', (dlg, id) => {
             const appInfo = id === Gtk.ResponseType.OK
                 ? dialog.get_widget().get_app_info() : null;
@@ -101,6 +99,7 @@ class AutoMoveSettingsWidget extends Gtk.ScrolledWindow {
             }
             dialog.destroy();
         });
+        dialog.show();
     }
 
     _onRemoveActivated(action, param) {
@@ -113,7 +112,7 @@ class AutoMoveSettingsWidget extends Gtk.ScrolledWindow {
     }
 
     _getRuleRows() {
-        return this._list.get_children().filter(row => !!row.id);
+        return [...this._list].filter(row => !!row.id);
     }
 
     _sync() {
@@ -139,16 +138,10 @@ class AutoMoveSettingsWidget extends Gtk.ScrolledWindow {
 
         const removed = oldRules.filter(
             ({ id }) => !newRules.find(r => r.id === id));
-        removed.forEach(r => r.destroy());
+        removed.forEach(r => this._list.remove(r));
 
         this._settings.unblock_signal_handler(this._changedId);
         this._updateAction.enabled = true;
-    }
-
-    _updateHeader(row, before) {
-        if (!before || row.get_header())
-            return;
-        row.set_header(new Gtk.Separator());
     }
 });
 
@@ -165,12 +158,6 @@ const RuleRow = GObject.registerClass({
     },
 }, class RuleRow extends Gtk.ListBoxRow {
     _init(appInfo, value) {
-        super._init({
-            activatable: false,
-            value,
-        });
-        this._appInfo = appInfo;
-
         const box = new Gtk.Box({
             spacing: 6,
             margin_top: 6,
@@ -179,12 +166,19 @@ const RuleRow = GObject.registerClass({
             margin_end: 6,
         });
 
+        super._init({
+            activatable: false,
+            value,
+            child: box,
+        });
+        this._appInfo = appInfo;
+
         const icon = new Gtk.Image({
             gicon: appInfo.get_icon(),
             pixel_size: 32,
         });
         icon.get_style_context().add_class('icon-dropshadow');
-        box.add(icon);
+        box.append(icon);
 
         const label = new Gtk.Label({
             label: appInfo.get_display_name(),
@@ -193,7 +187,7 @@ const RuleRow = GObject.registerClass({
             max_width_chars: 20,
             ellipsize: Pango.EllipsizeMode.END,
         });
-        box.add(label);
+        box.append(label);
 
         const spinButton = new Gtk.SpinButton({
             adjustment: new Gtk.Adjustment({
@@ -207,26 +201,17 @@ const RuleRow = GObject.registerClass({
         this.bind_property('value',
             spinButton, 'value',
             GObject.BindingFlags.SYNC_CREATE | GObject.BindingFlags.BIDIRECTIONAL);
-        box.add(spinButton);
+        box.append(spinButton);
 
         const button = new Gtk.Button({
             action_name: 'rules.remove',
             action_target: new GLib.Variant('s', this.id),
-            image: new Gtk.Image({
-                icon_name: 'edit-delete-symbolic',
-                pixel_size: 16,
-            }),
+            icon_name: 'edit-delete-symbolic',
         });
-        box.add(button);
+        box.append(button);
 
-        this.add(box);
-
-        this.connect('notify::value', () => {
-            const actionGroup = this.get_action_group('rules');
-            actionGroup.activate_action('update', null);
-        });
-
-        this.show_all();
+        this.connect('notify::value',
+            () => this.activate_action('rules.update', null));
     }
 
     get id() {
@@ -239,19 +224,17 @@ class NewRuleRow extends Gtk.ListBoxRow {
     _init() {
         super._init({
             action_name: 'rules.add',
+            child: new Gtk.Image({
+                icon_name: 'list-add-symbolic',
+                pixel_size: 16,
+                margin_top: 12,
+                margin_bottom: 12,
+                margin_start: 12,
+                margin_end: 12,
+            }),
         });
-        this.get_accessible().set_name(_('Add Rule'));
-
-        this.add(new Gtk.Image({
-            icon_name: 'list-add-symbolic',
-            pixel_size: 16,
-            margin_top: 12,
-            margin_bottom: 12,
-            margin_start: 12,
-            margin_end: 12,
-        }));
-
-        this.show_all();
+        this.update_property_value(
+            Gtk.AccessibleProperty.LABEL, _('Add Rule'));
     }
 });
 
@@ -273,8 +256,6 @@ class NewRuleDialog extends Gtk.AppChooserDialog {
         this.get_widget().connect('application-selected',
             this._updateSensitivity.bind(this));
         this._updateSensitivity();
-
-        this.show();
     }
 
     _updateSensitivity() {
